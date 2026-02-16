@@ -1,4 +1,4 @@
-Code base for AOD.
+Code-base for AOD.
 
 ## Layer extraction (Qwen2.5-VL-7B)
 
