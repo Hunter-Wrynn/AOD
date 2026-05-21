@@ -1,4 +1,4 @@
-# AOD: Adversarial Orthogonal Disentanglement
+# AOD: Adversarial Orthogonal Disentanglement for LVLM Hallucination Mitigation
 
 Official implementation of **Adversarial Orthogonal Disentanglement (AOD)**, a
 training-free, dual-forward-pass contrastive decoding strategy that mitigates
