@@ -19,6 +19,7 @@ from aod.vlm.loader import (
     load_vlm,
     resolve_default_model_id,
 )
+from aod.vlm.intervention import first_parameter_device, move_tensor_inputs
 
 
 def parse_layers(s: str) -> List[int]:
@@ -71,6 +72,8 @@ def extract_layers_on_amber(
     yes_ids, no_ids = get_yes_no_token_ids(loaded.tokenizer)
     if not yes_ids or not no_ids:
         raise RuntimeError(f"Failed to derive Yes/No token ids for {model_id}.")
+    input_device = first_parameter_device(loaded.model)
+    failed = 0
 
     amber_records = load_amber_discriminative(query_path, annotations_path, typology=typology)
     flat = amber_to_records(amber_records)
@@ -88,6 +91,7 @@ def extract_layers_on_amber(
 
         try:
             inputs = build_yes_no_inputs(loaded.processor, loaded.family, question, image)
+            inputs = move_tensor_inputs(inputs, input_device)
             with torch.inference_mode():
                 outputs = loaded.model(**inputs, output_hidden_states=True, return_dict=True)
 
@@ -124,8 +128,18 @@ def extract_layers_on_amber(
                 rec = dict(meta)
                 rec[f"layer_{l}_hidden"] = vec
                 storage[l].append(rec)
-        except Exception:
+        except Exception as exc:
+            failed += 1
+            if failed <= 5:
+                print(f"[WARN] failed sample id={int(item['id'])}: {type(exc).__name__}: {exc}")
             continue
+
+    total_records = sum(len(v) for v in storage.values())
+    if total_records == 0:
+        raise RuntimeError(
+            f"No records extracted from {query_path}; failed_samples={failed}. "
+            "Check image paths, processor prompt format, and model/device compatibility."
+        )
 
     for l in layers:
         l = int(l)

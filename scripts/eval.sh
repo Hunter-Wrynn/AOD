@@ -5,10 +5,11 @@
 #   bash scripts/eval.sh <model> <benchmark> [extra args...]
 #
 # <model>:     qwen2_5vl | llava | internvl3
-# <benchmark>: pope | hallusionbench | amber          (binary Yes/No)
-#              realworldqa | mmstar | mmmu            (multi-choice)
-#              chair | ocrbench                       (generative)
-#              layers                                 (diagnostic on extracted hidden states)
+# <benchmark>: pope | pope_random | pope_adversarial             (binary Yes/No)
+#              hallusionbench | amber                            (binary Yes/No)
+#              realworldqa | mmstar | mmmu                       (multi-choice)
+#              chair | ocrbench                                  (generative)
+#              layers                                            (diagnostic on extracted hidden states)
 #
 # Hallucination benchmarks (pope/hallusionbench/amber/chair) use the
 # in-domain trained direction. Utility benchmarks (realworldqa/mmstar/mmmu/
@@ -43,11 +44,25 @@ case "$MODEL_ALIAS" in
 esac
 
 case "$BENCH" in
-  pope)
+  pope|pope_popular)
     "$PY" "$REPO_ROOT/cli/eval_vlm_aod_binary.py" \
       --model_id "$MODEL_ID" \
       --dataset_format pope \
       --data_path data/POPE/coco_pope_popular.json \
+      --image_root data/POPE/val2014 "$@"
+    ;;
+  pope_random)
+    "$PY" "$REPO_ROOT/cli/eval_vlm_aod_binary.py" \
+      --model_id "$MODEL_ID" \
+      --dataset_format pope \
+      --data_path data/POPE/coco_pope_random.json \
+      --image_root data/POPE/val2014 "$@"
+    ;;
+  pope_adversarial)
+    "$PY" "$REPO_ROOT/cli/eval_vlm_aod_binary.py" \
+      --model_id "$MODEL_ID" \
+      --dataset_format pope \
+      --data_path data/POPE/coco_pope_adversarial.json \
       --image_root data/POPE/val2014 "$@"
     ;;
   hallusionbench|hb)
@@ -112,7 +127,7 @@ case "$BENCH" in
     ;;
   *)
     echo "Unknown benchmark: $BENCH" >&2
-    echo "Expected: pope|hallusionbench|amber|realworldqa|mmstar|mmmu|chair|ocrbench|layers" >&2
+    echo "Expected: pope|pope_random|pope_adversarial|hallusionbench|amber|realworldqa|mmstar|mmmu|chair|ocrbench|layers" >&2
     exit 2
     ;;
 esac

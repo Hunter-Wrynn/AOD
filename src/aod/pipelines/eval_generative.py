@@ -294,6 +294,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--aod_alpha", type=float, default=1.0)
     ap.add_argument("--beta", type=float, default=0.5)
     ap.add_argument("--apc_alpha", type=float, default=0.1)
+    ap.add_argument(
+        "--apc_mode",
+        choices=["vcd", "fallback"],
+        default="vcd",
+        help="APC masking: 'vcd' sets non-plausible token logits to -inf (canonical, default); "
+             "'fallback' keeps logits_pos on non-plausible tokens (legacy behavior).",
+    )
     ap.add_argument("--max_new_tokens", type=int, default=128)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--output_path", required=True)
@@ -361,6 +368,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             beta=float(args.beta),
             apc_alpha=float(args.apc_alpha),
             mode=args.mode,
+            apc_mode=args.apc_mode,
         )
 
     input_device = first_parameter_device(loaded.model)

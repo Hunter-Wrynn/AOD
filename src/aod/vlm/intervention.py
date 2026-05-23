@@ -25,6 +25,12 @@ class AODDecodeConfig:
     beta: float = 0.5
     apc_alpha: float = 0.1
     mode: str = "cd"
+    # APC implementation:
+    #   "vcd"      - canonical VCD masking: non-plausible tokens get -inf
+    #                (faithful to Adaptive Plausibility Constraint, default).
+    #   "fallback" - non-plausible tokens fall back to logits_pos
+    #                (original implementation in this repo, kept for back-compat).
+    apc_mode: str = "vcd"
 
 
 def resolve_attr(root: object, dotted_path: str) -> object:
@@ -130,17 +136,32 @@ def forward_next_logits(
     return get_output_logits(outputs)
 
 
-def aod_next_token_logits(model: torch.nn.Module, inputs: dict, cfg: AODDecodeConfig | None) -> torch.Tensor:
+def aod_next_token_logits(
+    model: torch.nn.Module,
+    inputs: dict,
+    cfg: AODDecodeConfig | None,
+    *,
+    return_fallback: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    """Return the AOD-decoded next-token logits.
+
+    If `return_fallback` is True, also returns the unmasked `logits_pos`
+    (factual-direction single-forward logits) so callers can recover when
+    APC's -inf masking excludes every token in a subset of interest
+    (e.g. both Yes and No tokens during binary Yes/No evaluation).
+    """
     if cfg is None or cfg.mode == "base":
-        return forward_next_logits(model, inputs)
+        logits = forward_next_logits(model, inputs)
+        return (logits, logits) if return_fallback else logits
     if cfg.mode == "direct":
-        return forward_next_logits(
+        logits = forward_next_logits(
             model,
             inputs,
             layer=cfg.layer,
             direction=cfg.direction,
             signed_alpha=-float(cfg.alpha),
         )
+        return (logits, logits) if return_fallback else logits
     if cfg.mode != "cd":
         raise ValueError(f"Unsupported AOD decode mode: {cfg.mode}")
 
@@ -162,7 +183,14 @@ def aod_next_token_logits(model: torch.nn.Module, inputs: dict, cfg: AODDecodeCo
     probs_pos = torch.softmax(logits_pos, dim=-1)
     threshold = float(cfg.apc_alpha) * probs_pos.max(dim=-1, keepdim=True).values
     plausible = probs_pos >= threshold
-    return torch.where(plausible, logits_cd, logits_pos)
+    if cfg.apc_mode == "vcd":
+        neg_inf = torch.full_like(logits_cd, float("-inf"))
+        masked = torch.where(plausible, logits_cd, neg_inf)
+    elif cfg.apc_mode == "fallback":
+        masked = torch.where(plausible, logits_cd, logits_pos)
+    else:
+        raise ValueError(f"Unsupported apc_mode: {cfg.apc_mode!r} (expected 'vcd' or 'fallback')")
+    return (masked, logits_pos) if return_fallback else masked
 
 
 def greedy_generate_ids(

@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from aod.data.amber import amber_to_records, load_amber_discriminative
 from aod.core.aod import load_checkpoint
-from aod.core.dataset import normalize_binary_answer
+from aod.core.dataset import normalize_binary_answer, split_indices
 from aod.vlm.loader import (
     DEFAULT_MODEL_IDS,
     build_yes_no_inputs,
@@ -135,9 +135,21 @@ def load_binary_samples(
     raise ValueError(f"Unsupported dataset format: {dataset_format}")
 
 
-def predict_yes_no(logits: torch.Tensor, yes_ids: Sequence[int], no_ids: Sequence[int]) -> int:
+def predict_yes_no(
+    logits: torch.Tensor,
+    yes_ids: Sequence[int],
+    no_ids: Sequence[int],
+    *,
+    fallback_logits: torch.Tensor | None = None,
+) -> int:
     yes_score = torch.max(logits[:, list(yes_ids)], dim=-1).values
     no_score = torch.max(logits[:, list(no_ids)], dim=-1).values
+    # Under canonical APC (-inf masking), both yes and no tokens can be masked
+    # out. Comparing -inf to -inf is True under >=, which would silently bias
+    # every such sample to "yes". Fall back to logits_pos in that case.
+    if fallback_logits is not None and (not torch.isfinite(yes_score).item()) and (not torch.isfinite(no_score).item()):
+        yes_score = torch.max(fallback_logits[:, list(yes_ids)], dim=-1).values
+        no_score = torch.max(fallback_logits[:, list(no_ids)], dim=-1).values
     return int((yes_score >= no_score).item())
 
 
@@ -178,7 +190,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--aod_alpha", type=float, default=1.0)
     ap.add_argument("--beta", type=float, default=0.5)
     ap.add_argument("--apc_alpha", type=float, default=0.1)
+    ap.add_argument(
+        "--apc_mode",
+        choices=["vcd", "fallback"],
+        default="vcd",
+        help="APC masking: 'vcd' sets non-plausible token logits to -inf (canonical, default); "
+             "'fallback' keeps logits_pos on non-plausible tokens (legacy behavior).",
+    )
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument(
+        "--use_test_split",
+        action="store_true",
+        default=False,
+        help="If set, restrict evaluation to the held-out 20%% split used during "
+             "AOD direction training (same --seed and --test_ratio as train_layers.py). "
+             "Use this when reporting in-domain hallucination benchmarks (POPE/AMBER/"
+             "HallusionBench) to avoid scoring on training samples.",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for split_indices; must match the value used in train_layers.py.",
+    )
+    ap.add_argument(
+        "--test_ratio",
+        type=float,
+        default=0.2,
+        help="Test ratio for split_indices; must match the value used in train_layers.py.",
+    )
     ap.add_argument("--output_path", default="")
     ap.add_argument("--dtype", choices=["bf16", "fp16", "fp32"], default="bf16")
     ap.add_argument("--device_map", default="auto")
@@ -195,6 +235,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         amber_annotations_path=args.amber_annotations_path,
         amber_typology=args.amber_typology,
     )
+    if args.use_test_split:
+        _, test_idx = split_indices(
+            n=len(samples),
+            test_ratio=float(args.test_ratio),
+            seed=int(args.seed),
+        )
+        samples = [samples[i] for i in test_idx.tolist()]
+        print(
+            f"[split] use_test_split=True seed={args.seed} test_ratio={args.test_ratio} "
+            f"-> evaluating on {len(samples)} held-out samples"
+        )
     if args.limit > 0:
         samples = samples[: int(args.limit)]
     if not samples:
@@ -224,6 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             beta=float(args.beta),
             apc_alpha=float(args.apc_alpha),
             mode=args.mode,
+            apc_mode=args.apc_mode,
         )
 
     input_device = first_parameter_device(loaded.model)
@@ -235,8 +287,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         inputs = build_yes_no_inputs(loaded.processor, loaded.family, sample.question, image)
         inputs = move_tensor_inputs(inputs, input_device)
         with torch.inference_mode():
-            logits = aod_next_token_logits(loaded.model, inputs, cfg)
-        pred01 = predict_yes_no(logits, yes_ids=yes_ids, no_ids=no_ids)
+            logits, logits_fb = aod_next_token_logits(
+                loaded.model, inputs, cfg, return_fallback=True
+            )
+        pred01 = predict_yes_no(
+            logits, yes_ids=yes_ids, no_ids=no_ids, fallback_logits=logits_fb
+        )
         ok = pred01 == int(sample.answer01)
         correct += int(ok)
         total += 1

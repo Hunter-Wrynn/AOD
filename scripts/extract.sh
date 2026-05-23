@@ -5,12 +5,14 @@
 #   bash scripts/extract.sh <model> <benchmark> [extra args...]
 #
 # <model>:     qwen2_5vl | llava | internvl3
-# <benchmark>: pope | hallusionbench | amber
+# <benchmark>: pope | pope_random | pope_adversarial | hallusionbench | amber
 #
 # Examples:
-#   bash scripts/extract.sh qwen2_5vl pope         --layers 24
-#   bash scripts/extract.sh llava     hallusionbench --layers 24
-#   bash scripts/extract.sh internvl3 amber        --layers 24 --typology existence
+#   bash scripts/extract.sh qwen2_5vl pope             --layers 24
+#   bash scripts/extract.sh qwen2_5vl pope_random      --layers 24
+#   bash scripts/extract.sh qwen2_5vl pope_adversarial --layers 24
+#   bash scripts/extract.sh llava     hallusionbench   --layers 24
+#   bash scripts/extract.sh internvl3 amber            --layers 24 --typology existence
 
 set -euo pipefail
 
@@ -33,12 +35,28 @@ case "$MODEL_ALIAS" in
 esac
 
 case "$BENCH" in
-  pope)
+  pope|pope_popular)
     "$PY" "$REPO_ROOT/cli/extract_vlm_layers_pope.py" \
       --model_id "$MODEL_ID" \
       --jsonl_path data/POPE/coco_pope_popular.json \
       --image_root data/POPE/val2014 \
       --output_dir "output/layers/${MODEL_DIR}_pope" \
+      --layers 24 "$@"
+    ;;
+  pope_random)
+    "$PY" "$REPO_ROOT/cli/extract_vlm_layers_pope.py" \
+      --model_id "$MODEL_ID" \
+      --jsonl_path data/POPE/coco_pope_random.json \
+      --image_root data/POPE/val2014 \
+      --output_dir "output/layers/${MODEL_DIR}_pope_random" \
+      --layers 24 "$@"
+    ;;
+  pope_adversarial)
+    "$PY" "$REPO_ROOT/cli/extract_vlm_layers_pope.py" \
+      --model_id "$MODEL_ID" \
+      --jsonl_path data/POPE/coco_pope_adversarial.json \
+      --image_root data/POPE/val2014 \
+      --output_dir "output/layers/${MODEL_DIR}_pope_adversarial" \
       --layers 24 "$@"
     ;;
   hallusionbench|hb)
@@ -59,5 +77,5 @@ case "$BENCH" in
       --layers 24 "$@"
     ;;
   *)
-    echo "Unknown benchmark: $BENCH (expected pope|hallusionbench|amber)" >&2; exit 2 ;;
+    echo "Unknown benchmark: $BENCH (expected pope|pope_random|pope_adversarial|hallusionbench|amber)" >&2; exit 2 ;;
 esac

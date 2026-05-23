@@ -41,10 +41,28 @@ def parse_floats(s: str) -> List[float]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", required=True, help="Path to aod_hallusionbench_layer_*.pt")
-    ap.add_argument("--layers_dir", default="output/layers/qwen2_5vl_hallusionbench")
-    ap.add_argument("--test_ratio", type=float, default=0.2)
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--ckpt", required=True, help="Path to aod_<bench>_layer_*.pt")
+    ap.add_argument(
+        "--layers_dir",
+        required=True,
+        help="Directory of extracted hidden states matching this ckpt, "
+             "e.g. output/layers/qwen2_5vl_pope.",
+    )
+    ap.add_argument(
+        "--test_ratio",
+        type=float,
+        default=-1.0,
+        help="Test ratio for split_indices. Default <0 means use the training "
+             "default (0.2); must match the value used by train_layers.py for "
+             "this ckpt.",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=-1,
+        help="Seed for split_indices. Default <0 means read meta.seed from the "
+             "ckpt so the held-out split matches the training run.",
+    )
     ap.add_argument("--alphas", default="0.0,0.5,1.0,2.0,3.0,5.0")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     ap.add_argument("--quiet_load_warning", action="store_true", help="Suppress torch.load FutureWarning output.")
@@ -69,7 +87,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     layer = int(meta.layer)
     ds_path = os.path.join(args.layers_dir, f"layer_{layer}_dataset.json")
     ds = load_layer_dataset(ds_path, layer=layer, device=device)
-    train_idx, test_idx = split_indices(n=int(ds.x.shape[0]), test_ratio=float(args.test_ratio), seed=int(args.seed))
+
+    seed = int(args.seed) if int(args.seed) >= 0 else int(meta.seed)
+    test_ratio = float(args.test_ratio) if float(args.test_ratio) >= 0.0 else 0.2
+    print(f"[split] seed={seed} test_ratio={test_ratio} (meta.seed={meta.seed})")
+    train_idx, test_idx = split_indices(n=int(ds.x.shape[0]), test_ratio=test_ratio, seed=seed)
 
     x_te = ds.x[test_idx]
     y_te = ds.y_consistency[test_idx]

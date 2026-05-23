@@ -44,6 +44,7 @@ def train_one_layer(
     weight_decay: float,
     probe_hidden_dim: int,
     grl_lambda: float,
+    orient_v: bool = True,
 ) -> Dict[str, Any]:
     torch.manual_seed(int(seed))
     np.random.seed(int(seed))
@@ -75,7 +76,12 @@ def train_one_layer(
             out = model(xb)
             loss_task = bce(out["pred_consistency"], yb)
             loss_adv = bce(out["pred_residual_adv"], yb)
-            loss = loss_task + loss_adv
+            # Paper Eq. 4: L = L_cls - lambda * L_adv. The GRL already negates
+            # the gradient that flows back into v / the encoder side, so we add
+            # (not subtract) loss_adv here and let grl_lambda scale its
+            # contribution. With grl_lambda=1.0 (paper default) this is
+            # identical to the previous loss_task + loss_adv.
+            loss = loss_task + float(grl_lambda) * loss_adv
 
             opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -95,6 +101,26 @@ def train_one_layer(
                 f"[Layer {ds.layer}] ep={epoch+1:03d}/{epochs} "
                 f"train_loss={avg_loss:.4f} base_consistency={base_consistency:.2f}% "
                 f"direction_acc={direction_acc:.2f}% residual_adv_acc={residual_adv_acc:.2f}%"
+            )
+
+    if orient_v:
+        # Diagnostic only: |x·v| should be larger on hallucinated samples (y=0)
+        # than consistent ones (y=1) for the learned direction to be useful.
+        # Note: the *sign* of v does not matter — h_hallu = (x·v)v is invariant
+        # under v -> -v, and so are steer() and the CD intervention
+        # z' = z ± gamma * (z·v) v. We log the gap but never flip.
+        with torch.no_grad():
+            v = model.v_unit()
+            proj = (x_tr.matmul(v.t())).abs().view(-1)
+            mask_hallu = (y_tr.view(-1) <= 0.5)
+            mask_cons = (y_tr.view(-1) > 0.5)
+            mag_hallu = float(proj[mask_hallu].mean().item()) if mask_hallu.any() else 0.0
+            mag_cons = float(proj[mask_cons].mean().item()) if mask_cons.any() else 0.0
+            gap = mag_hallu - mag_cons
+            print(
+                f"[Layer {ds.layer}] orient_v diag: |x.v| hallu={mag_hallu:.4f} "
+                f"cons={mag_cons:.4f} gap(hallu-cons)={gap:+.4f} "
+                f"({'OK' if gap > 0 else 'WARN: projection larger on consistent — direction may be uninformative'})"
             )
 
     model.eval()
@@ -138,9 +164,19 @@ def parse_layers(s: str) -> List[int]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--layers_dir", default="output/layers/qwen2_5vl_hallusionbench")
-    ap.add_argument("--layers", default="1,4,8,12,16,20,24,28")
-    ap.add_argument("--output_dir", default="output/aod_ckpt/hallusionbench")
+    ap.add_argument(
+        "--layers_dir",
+        required=True,
+        help="Directory of extracted hidden states (output of extract.sh), "
+             "e.g. output/layers/qwen2_5vl_pope.",
+    )
+    ap.add_argument("--layers", default="24")
+    ap.add_argument(
+        "--output_dir",
+        required=True,
+        help="Where to write aod_<bench>_layer_<L>.pt, "
+             "e.g. output/aod_ckpt/qwen2_5vl_pope.",
+    )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--test_ratio", type=float, default=0.2)
     ap.add_argument("--epochs", type=int, default=5)
@@ -148,9 +184,53 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--weight_decay", type=float, default=0.0)
     ap.add_argument("--probe_hidden_dim", type=int, default=512)
-    ap.add_argument("--grl_lambda", type=float, default=1.0, help="Paper's adversarial weight lambda; applied inside the GRL backward.")
+    ap.add_argument(
+        "--grl_lambda",
+        type=float,
+        default=1.0,
+        help="Paper's adversarial weight lambda; applied to L_adv outside the GRL.",
+    )
+    ap.add_argument(
+        "--bench",
+        default="",
+        help=(
+            "Benchmark tag used in the saved checkpoint filename "
+            "(aod_<bench>_layer_<L>.pt). If empty, inferred from --layers_dir "
+            "basename: 'qwen2_5vl_pope' -> 'pope'."
+        ),
+    )
+    ap.add_argument(
+        "--orient_v",
+        type=int,
+        default=1,
+        choices=[0, 1],
+        help="If 1 (default) log a post-training diagnostic comparing |x.v| on "
+             "hallucinated vs consistent samples. The sign of v itself does not "
+             "affect inference (projection (x.v)v is sign-invariant), so this is "
+             "diagnostic only — no parameter is modified.",
+    )
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     args = ap.parse_args(argv)
+
+    # Derive bench tag for the checkpoint filename. Layer dirs created by
+    # scripts/extract.sh are named "<model>_<bench>" where <model> is one of
+    # the known aliases (some contain underscores, e.g. qwen2_5vl), so we
+    # strip a known model prefix rather than splitting on the last "_".
+    bench = args.bench.strip()
+    if not bench:
+        base = os.path.basename(os.path.normpath(args.layers_dir))
+        known_model_dirs = ("qwen2_5vl", "llava", "internvl3")
+        for mp in known_model_dirs:
+            prefix = mp + "_"
+            if base.startswith(prefix):
+                bench = base[len(prefix):]
+                break
+        if not bench:
+            bench = base.rsplit("_", 1)[-1] if "_" in base else base
+    if not bench:
+        raise ValueError(
+            "Could not derive --bench from --layers_dir; pass --bench explicitly."
+        )
 
     if args.device == "auto":
         if torch.cuda.is_available():
@@ -181,6 +261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             weight_decay=float(args.weight_decay),
             probe_hidden_dim=int(args.probe_hidden_dim),
             grl_lambda=float(args.grl_lambda),
+            orient_v=bool(int(args.orient_v)),
         )
         model: AODDisentangler = run["model"]
         res: TrainResult = run["result"]
@@ -194,7 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=int(args.seed),
             label_name="consistency",
         )
-        ckpt_path = os.path.join(args.output_dir, f"aod_hallusionbench_layer_{int(layer)}.pt")
+        ckpt_path = os.path.join(args.output_dir, f"aod_{bench}_layer_{int(layer)}.pt")
         save_checkpoint(ckpt_path, ckpt_meta, model)
         print(f"[Saved] {ckpt_path}")
 

@@ -48,10 +48,14 @@ class AODDisentangler(nn.Module):
         grl_lambda: float = 1.0,
     ) -> None:
         super().__init__()
+        # grl_lambda is kept in the meta for record-keeping, but the GRL itself
+        # only performs the sign flip; the scalar weight is applied to L_adv
+        # outside the module so the loss matches Eq. 4 of the paper.
+        self._grl_lambda_meta = float(grl_lambda)
         self.v = nn.Parameter(torch.randn(1, input_dim))
         self.consistency_probe = mlp_probe(input_dim=input_dim, hidden_dim=probe_hidden_dim)
         self.residual_adversary = nn.Sequential(
-            GradientReversalLayer(lambda_=grl_lambda),
+            GradientReversalLayer(lambda_=1.0),
             mlp_probe(input_dim=input_dim, hidden_dim=probe_hidden_dim),
         )
 
@@ -109,12 +113,5 @@ def load_checkpoint(path: str, map_location: str | torch.device = "cpu") -> Tupl
         probe_hidden_dim=int(meta.probe_hidden_dim),
         grl_lambda=float(meta.grl_lambda),
     )
-    state_dict = ckpt["state_dict"]
-    # Backward-compatible key migration for early prototype checkpoints.
-    migrated = {}
-    for key, value in state_dict.items():
-        key = key.replace("truth_probe.", "consistency_probe.")
-        key = key.replace("adversary.", "residual_adversary.")
-        migrated[key] = value
-    model.load_state_dict(migrated, strict=False)
+    model.load_state_dict(ckpt["state_dict"], strict=False)
     return meta, model
