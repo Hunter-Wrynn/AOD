@@ -182,10 +182,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     model_id = resolve_default_model_id(args.model_id)
     cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=args.trust_remote_code)
+    text_cfg = getattr(cfg, "text_config", None)
+    num_hidden_layers = getattr(cfg, "num_hidden_layers", None) or getattr(text_cfg, "num_hidden_layers", None)
+    hidden_size = getattr(cfg, "hidden_size", None) or getattr(text_cfg, "hidden_size", None)
     print(f"[Model] {model_id}")
     print(
-        f"[Config] num_hidden_layers={getattr(cfg,'num_hidden_layers',None)} "
-        f"hidden_size={getattr(cfg,'hidden_size',None)} model_type={getattr(cfg,'model_type',None)}"
+        f"[Config] num_hidden_layers={num_hidden_layers} "
+        f"hidden_size={hidden_size} model_type={getattr(cfg,'model_type',None)}"
     )
     if args.dry_run:
         return 0

@@ -113,5 +113,27 @@ def load_checkpoint(path: str, map_location: str | torch.device = "cpu") -> Tupl
         probe_hidden_dim=int(meta.probe_hidden_dim),
         grl_lambda=float(meta.grl_lambda),
     )
-    model.load_state_dict(ckpt["state_dict"], strict=False)
+    state_dict = ckpt["state_dict"]
+    result = model.load_state_dict(state_dict, strict=False)
+    missing = list(getattr(result, "missing_keys", []) or [])
+    unexpected = list(getattr(result, "unexpected_keys", []) or [])
+    if missing or unexpected:
+        # Detect early-prototype checkpoints with renamed branches and point
+        # the user at the explicit migration rather than silently leaving
+        # consistency_probe / residual_adversary at random init.
+        legacy_prefixes = ("truth_probe.", "adversary.")
+        looks_legacy = any(k.startswith(legacy_prefixes) for k in unexpected)
+        hint = (
+            "\nThis looks like an early-prototype checkpoint (keys start with "
+            "'truth_probe.' or 'adversary.'). Re-train with the current "
+            "train_layers.py, or manually rename keys:\n"
+            "  truth_probe.* -> consistency_probe.*\n"
+            "  adversary.*   -> residual_adversary.*"
+            if looks_legacy
+            else ""
+        )
+        raise RuntimeError(
+            f"Checkpoint {path} is incompatible with AODDisentangler "
+            f"(missing_keys={missing!r}, unexpected_keys={unexpected!r}).{hint}"
+        )
     return meta, model

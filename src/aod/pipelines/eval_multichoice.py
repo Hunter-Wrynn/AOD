@@ -221,13 +221,29 @@ def get_letter_token_ids(tokenizer: Any, num_options: int) -> List[List[int]]:
     return out
 
 
-def predict_mc(logits: torch.Tensor, letter_ids: List[List[int]]) -> int:
+def _score_letters(logits: torch.Tensor, letter_ids: List[List[int]]) -> List[float]:
     scores: List[float] = []
     for ids in letter_ids:
         if not ids:
             scores.append(float("-inf"))
             continue
         scores.append(float(torch.max(logits[:, ids], dim=-1).values.item()))
+    return scores
+
+
+def predict_mc(
+    logits: torch.Tensor,
+    letter_ids: List[List[int]],
+    *,
+    fallback_logits: torch.Tensor | None = None,
+) -> int:
+    scores = _score_letters(logits, letter_ids)
+    # Under canonical APC (-inf masking), every candidate letter token can be
+    # masked. argmax over all-(-inf) scores deterministically returns 0
+    # ("A"), silently biasing the benchmark. Re-score from logits_pos in that
+    # case so the model's pre-APC preference among the option letters wins.
+    if fallback_logits is not None and not any(s > float("-inf") for s in scores):
+        scores = _score_letters(fallback_logits, letter_ids)
     return int(max(range(len(scores)), key=lambda i: scores[i]))
 
 
@@ -330,8 +346,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         inputs = move_tensor_inputs(inputs, input_device)
         letter_ids = get_letter_token_ids(loaded.tokenizer, num_options=len(sample.options))
         with torch.inference_mode():
-            logits = aod_next_token_logits(loaded.model, inputs, cfg)
-        pred_idx = predict_mc(logits, letter_ids=letter_ids)
+            logits, logits_fb = aod_next_token_logits(
+                loaded.model, inputs, cfg, return_fallback=True
+            )
+        pred_idx = predict_mc(logits, letter_ids=letter_ids, fallback_logits=logits_fb)
         pred_letter = chr(ord("A") + pred_idx)
         ok = pred_letter == sample.answer_letter
         correct += int(ok)

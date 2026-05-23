@@ -64,7 +64,14 @@ def load_amber_discriminative(
         sid = rec.get("id")
         if sid is None:
             continue
-        ann = annotations.get(str(sid)) or annotations.get(int(sid)) if isinstance(annotations, dict) else None
+        # Annotations may be keyed by either str or int id; try str first, then
+        # fall back to int (guarded — `int("foo")` would raise on non-numeric ids).
+        ann = annotations.get(str(sid))
+        if ann is None:
+            try:
+                ann = annotations.get(int(sid))
+            except (TypeError, ValueError):
+                ann = None
         if not isinstance(ann, dict):
             continue
         truth = str(ann.get("truth", "")).strip().lower()

@@ -169,11 +169,19 @@ adversary suppression on the residual) — it does not run model generation.
 **Hallucination benchmarks** (in-domain trained direction):
 
 ```bash
-bash scripts/eval.sh qwen2_5vl pope            --mode cd --ckpt output/aod_ckpt/qwen2_5vl_pope/aod_pope_layer_24.pt
-bash scripts/eval.sh llava     hallusionbench  --mode cd --ckpt output/aod_ckpt/llava_hallusionbench/aod_hallusionbench_layer_24.pt
-bash scripts/eval.sh internvl3 amber           --mode cd --ckpt output/aod_ckpt/internvl3_amber/aod_amber_layer_24.pt
+bash scripts/eval.sh qwen2_5vl pope            --mode cd --ckpt output/aod_ckpt/qwen2_5vl_pope/aod_pope_layer_24.pt --use_test_split
+bash scripts/eval.sh llava     hallusionbench  --mode cd --ckpt output/aod_ckpt/llava_hallusionbench/aod_hallusionbench_layer_24.pt --use_test_split
+bash scripts/eval.sh internvl3 amber           --mode cd --ckpt output/aod_ckpt/internvl3_amber/aod_amber_layer_24.pt --use_test_split
 bash scripts/eval.sh qwen2_5vl chair           --mode cd --ckpt output/aod_ckpt/qwen2_5vl_pope/aod_pope_layer_24.pt
 ```
+
+POPE ships three splits; the dispatcher exposes each one separately:
+`pope` (popular), `pope_random`, `pope_adversarial`.
+
+`--use_test_split --seed 42 --test_ratio 0.2` reuses the same 80/20 split the
+trainer carved out at extract time, so evaluation runs only over held-out
+samples and never reports on data the direction was trained on. Omit it (the
+default) to score against every sample, matching the paper's headline numbers.
 
 **Utility benchmarks** (POPE-trained direction, zero-shot transfer):
 
@@ -188,6 +196,13 @@ Mode flag: `--mode {base|direct|cd}`. Common hyperparameters:
 `--aod_alpha 1.0 --beta 0.5 --apc_alpha 0.1`. For CHAIR, the metric is
 computed in-process when `--coco_instances_path` is set (the dispatcher does
 this by default).
+
+APC mode: `--apc_mode {vcd,fallback}` (default `vcd`). `vcd` is the canonical
+VCD-style Adaptive Plausibility Constraint — non-plausible token logits are
+set to `-inf` so they cannot be sampled. `fallback` keeps the positive-pass
+logits on non-plausible tokens instead (legacy behaviour); binary and
+multi-choice scorers fall back to the positive-pass logits automatically if
+every candidate answer token ends up masked.
 
 ## Coverage Matrix
 
