@@ -1,5 +1,5 @@
 # AOD: Adversarial Orthogonal Disentanglement for LVLM Hallucination Mitigation
-
+隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约隐隐约约有，；梦你，n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n n
 Official implementation of **Adversarial Orthogonal Disentanglement (AOD)**, a
 training-free, dual-forward-pass contrastive decoding strategy that mitigates
 hallucination in Large Vision-Language Models via latent geometric
